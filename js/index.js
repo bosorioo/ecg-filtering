@@ -1,33 +1,95 @@
 const btnPlayPause = document.querySelector('#btnPlayPause')
-const chart = echarts.init(document.querySelector('#main'))
+const optionsSource = document.querySelector('#inputSignalSource')
+const mainDiv = document.querySelector('#main')
+const chart = echarts.init(mainDiv)
 
-const SAMPLES_SOURCE_INDEX = 0
+const INITIAL_SAMPLE_SOURCE_INDEX = 0
 const SAMPLES_SOURCES = [
   {
-    data: SAMPLES_RAW,
-    rate: 120
+    data: SAMPLES_ARDUINO,
+    rate: 120,
+    name: 'Arduino ECG'
   },
   {
-    data: SAMPLES_aami3a,
-    rate: 720
+    data: SAMPLES_AAMI_EC13_3a,
+    rate: 720,
+    name: 'AAMI EC13 - 3a'
+  },
+  {
+    data: SAMPLES_AAMI_EC13_3d,
+    rate: 720,
+    name: 'AAMI EC13 - 3d'
+  },
+  {
+    data: SAMPLES_AAMI_EC13_4b,
+    rate: 720,
+    name: 'AAMI EC13 - 4b'
+  },
+  {
+    data: SAMPLES_ECG_ID_PERSON_01_REC_1,
+    rate: 500,
+    name: 'ECG ID - Person 1/Rec 1'
+  },
+  {
+    data: SAMPLES_PTBDB_PATIENT_05_S0101lre,
+    rate: 1000,
+    name: 'PTBDB - Patient 05 S0101lre'
+  },
+  {
+    data: SAMPLES_SINE,
+    rate: 120,
+    name: 'Senoide'
+  },
+  {
+    data: SAMPLES_SINE_NOISE_8,
+    rate: 120,
+    name: 'Senoide + Ruído (8%)'
+  },
+  {
+    data: SAMPLES_SINE_NOISE_33,
+    rate: 120,
+    name: 'Senoide + Ruído (33%)'
   }
 ]
 
 const DISPLAY_FEED_SIZE = 12
-const DISPLAY_UPDATE_TIME_FACTOR = 1
 
-const SAMPLES_SOURCE = SAMPLES_SOURCES[SAMPLES_SOURCE_INDEX]
+let DISPLAY_UPDATE_TIME_FACTOR = 1
+let CURRENT_SOURCE_INDEX
+let SAMPLES
+let SAMPLE_RATE
+let DISPLAY_SAMPLES_MAX
+let DISPLAY_BEGIN_X
+let X_AXIS_RANGE
+let X_VIEWPORT_SIZE = 3
 
-const SAMPLES = SAMPLES_SOURCE.data
-const SAMPLE_RATE = SAMPLES_SOURCE.rate
+function setSource (index) {
+  let source = SAMPLES_SOURCES[index]
 
-const DISPLAY_SAMPLES_MAX = SAMPLE_RATE * 3
-const DISPLAY_BEGIN_X = 0 * 1e-3 * SAMPLE_RATE
+  if (!source) {
+    return
+  }
 
-const X_AXIS_RANGE = DISPLAY_SAMPLES_MAX / SAMPLE_RATE * 1000
+  CURRENT_SOURCE_INDEX = index
+  SAMPLES = source.data
+  SAMPLE_RATE = source.rate
+  DISPLAY_SAMPLES_MAX = SAMPLE_RATE * X_VIEWPORT_SIZE
+  DISPLAY_BEGIN_X = 0 * 1e-3 * SAMPLE_RATE
+  X_AXIS_RANGE = DISPLAY_SAMPLES_MAX / SAMPLE_RATE * 1000
+
+  optionsSource.selectedIndex = index
+  return true
+}
+
+function addZoomX (delta) {
+  X_VIEWPORT_SIZE += delta
+  X_VIEWPORT_SIZE = Math.max(0.25, Math.min(X_VIEWPORT_SIZE, 5))
+  setSource(CURRENT_SOURCE_INDEX)
+  updateDisplay()
+}
 
 let isPlaying = true
-let lastSampleAdded = DISPLAY_BEGIN_X
+let lastSampleAdded = DISPLAY_BEGIN_X || 0
 
 function sampleIndexToMs (index) {
   return index * 1000 / SAMPLE_RATE
@@ -43,6 +105,7 @@ let filters = [
   {
     // taken from https://www.megunolink.com/articles/3-methods-filter-noisy-arduino-measurements/
     name: 'exp-filter',
+    disabled: true,
     handler (incomingSample, raw, output) {
       let w = 0.45
       if (output.length === 0) {
@@ -61,6 +124,7 @@ let filters = [
   {
     // Chebyshev Type 2 FIR
     name: 'cheby2-8',
+    disabled: true,
     handler (incomingSample, raw, output) {
       const N = 8
       const A = [1,-5.64737797273014,14.2191712744666,-20.7845222563753,19.2510054679411,-11.5511646917874,4.37940372345248,-0.958208975534196,0.0925573026794671]
@@ -134,6 +198,7 @@ let filters = [
   {
     // taken from https://www.megunolink.com/articles/3-methods-filter-noisy-arduino-measurements/
     name: 'running-avg',
+    disabled: true,
     handler (incomingSample, raw, output) {
       let avg = 0
       let avgDiv = 0
@@ -152,55 +217,60 @@ let filters = [
     }
   }
 ]
+.filter(f => !f.disabled)
 .map(f => Object.assign(f, { data: [] }))
 
 let samplesDisplay = []
-let chartOption = {
-  animation: false,
-  legend: {
-    data: filters.map(f => f.name)
-  },
-  /* visualMap: [
-    {
-      show: false,
-      type: 'continuous',
-      seriesIndex: 0,
-      min: 1.5,
-      max: 4.5
+let chartOption
+
+function initChartOption () {
+  chartOption = {
+    animation: false,
+    legend: {
+      data: filters.map(f => f.name)
     },
-    {
-      show: false,
-      type: 'continuous',
-      seriesIndex: 1,
-      inRange: {
-        color: [ 'rgba(38, 104, 255, 0.5)', 'rgba(38, 104, 255, 1)' ]
+    /* visualMap: [
+      {
+        show: false,
+        type: 'continuous',
+        seriesIndex: 0,
+        min: 1.5,
+        max: 4.5
       },
-      min: 1.5,
-      max: 4.5
-    }
-  ], */
-  xAxis: {
-    type: 'value',
-    min: DISPLAY_BEGIN_X,
-    max: DISPLAY_BEGIN_X + X_AXIS_RANGE,
-    // minInterval: 1000
-  },
-  yAxis: {
-    type: 'value',
-    min: Math.floor(SAMPLES.reduce((acc, v) => acc > v ? v : acc) * 100 - 0.1) / 100,
-    max: Math.ceil(SAMPLES.reduce((acc, v) => acc < v ? v : acc) * 100 + 0.1) / 100
-  },
-  series: filters.map(f => {
-    return {
-      symbol: 'none',
-      type: 'line',
-      data: f.data,
-      name: f.name,
-      stack: f.stack,
-      sampling: 'max',
-      animation: false
-    }
-  })
+      {
+        show: false,
+        type: 'continuous',
+        seriesIndex: 1,
+        inRange: {
+          color: [ 'rgba(38, 104, 255, 0.5)', 'rgba(38, 104, 255, 1)' ]
+        },
+        min: 1.5,
+        max: 4.5
+      }
+    ], */
+    xAxis: {
+      type: 'value',
+      min: DISPLAY_BEGIN_X,
+      max: DISPLAY_BEGIN_X + X_AXIS_RANGE,
+      // minInterval: 1000
+    },
+    yAxis: {
+      type: 'value',
+      min: Math.floor(SAMPLES.reduce((acc, v) => acc > v ? v : acc) * 100 - 0.1) / 100,
+      max: Math.ceil(SAMPLES.reduce((acc, v) => acc < v ? v : acc) * 100 + 0.1) / 100
+    },
+    series: filters.map(f => {
+      return {
+        symbol: 'none',
+        type: 'line',
+        data: f.data,
+        name: f.name,
+        stack: f.stack,
+        sampling: 'max',
+        animation: false
+      }
+    })
+  }
 }
 
 function zeroPad (num, length = 3) {
@@ -213,9 +283,6 @@ function zeroPad (num, length = 3) {
 
 function updateDisplay (xAxisIndexInit) {
   if (samplesDisplay.length > 0) {
-    // chartOption.xAxis.min = samplesDisplay[0][0]
-    // chartOption.xAxis.max = samplesDisplay[0][0] + X_AXIS_RANGE
-
     let base = Math.max(0, samplesDisplay[samplesDisplay.length - 1][0] - X_AXIS_RANGE)
     chartOption.xAxis.min = base
     chartOption.xAxis.max = base + X_AXIS_RANGE
@@ -248,28 +315,12 @@ function addSamplesToDisplay (amount = 1) {
       raw.push(sample)
       filter.handler(sample, raw, filter.data)
     }
-
-    if (filter.data.length > DISPLAY_SAMPLES_MAX) {
-      // filter.data.splice(0, filter.data.length - DISPLAY_SAMPLES_MAX)
-    }
   }
 
   samplesDisplay = samplesDisplay.concat(samplesToAdd)
 
-  if (samplesDisplay.length > DISPLAY_SAMPLES_MAX) {
-    // samplesDisplay = samplesDisplay.slice(
-      // samplesDisplay.length - DISPLAY_SAMPLES_MAX
-    // )
-  }
-
   updateDisplay()
 }
-
-// let interval = setInterval(() => {
-  // if (isPlaying) {
-    // addSamplesToDisplay(DISPLAY_FEED_SIZE)
-  // }
-// }, 1000 / SAMPLE_RATE * DISPLAY_FEED_SIZE * DISPLAY_UPDATE_TIME_FACTOR)
 
 let fps = 60
 let lastUpdate = new Date()
@@ -307,8 +358,10 @@ function toggleSimulationPlaying () {
   chart.setOption(chartOption)
 
   btnPlayPause.textContent = isPlaying
-    ? '  Pausar '
+    ? 'Pausar'
     : 'Continuar'
+
+  lastUpdate = new Date()
 }
 
 function restartSimulation () {
@@ -322,3 +375,30 @@ function restartSimulation () {
   }
   addSamplesToDisplay()
 }
+
+function changePlaybackSpeed (event) {
+  let speed = Number(event.target.value)
+  if (speed) {
+    DISPLAY_UPDATE_TIME_FACTOR = speed
+  }
+}
+
+// Initializes all select options in the UI
+{
+  for (let sampleSource of SAMPLES_SOURCES) {
+    let child = document.createElement('option')
+    child.value = sampleSource.name
+    child.appendChild(document.createTextNode(sampleSource.name))
+    optionsSource.appendChild(child)
+  }
+
+  optionsSource.oninput = () => {
+    if (setSource(optionsSource.selectedIndex)) {
+      initChartOption()
+      restartSimulation()
+    }
+  }
+}
+
+setSource(INITIAL_SAMPLE_SOURCE_INDEX)
+initChartOption()

@@ -1,4 +1,4 @@
-const SAMPLES_aami3a = [
+const SAMPLES_AAMI_EC13_3a = [
 0.18461538,
 0.18461538,
 0.16923077,
