@@ -17,9 +17,22 @@ body {
   padding: 8px;
   user-select: none;
 }
+
+.github-link--img {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+}
 </style>
 </head>
 <body>
+  <a href="https://github.com/bosorioo/ecg-filtering" target="_blank">
+    <img src="assets/github.png" class="github-link--img">
+    </img>
+  </a>
   <div class="controls__container">
     <button id="btnPlayPause" style="min-width: 80px;" onclick="toggleSimulationPlaying()">
       Pausar
