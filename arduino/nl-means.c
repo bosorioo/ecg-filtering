@@ -1,4 +1,16 @@
+/// The macro DEBUG can be defined to make Arduino send
+/// various text messages with debug info.
 //#define DEBUG
+
+/// The macro USE_GENERATED_SINE can be defined to make
+/// this code generate a sine wave with noise as input
+/// for the filter instead of reading data from the
+/// analog port.
+//#define USE_GENERATED_SINE
+
+/// The macro below defines from which analog port
+/// the ECG circuit output readings will be made
+#define INPUT_ANALOG_PORT A0
 
 #define NL_MEANS_WINDOW_SIZE 21
 #define NL_MEANS_TEMPLATE_SIZE 7
@@ -10,21 +22,25 @@ const double SINE_AMPLITUDE = 3.;
 const double NOISE_AMPLITUDE = 3.;
 const double PI_TWO = 6.283185307179;
 
+// Some pre calculated values for performance
 const double _AMPLITUDE_MAX = SINE_AMPLITUDE + NOISE_AMPLITUDE;
 const double _H_TIMES_2_INV_NEG = -1. / (NL_MEANS_H * NL_MEANS_H);
 const int _NL_WINDOW_FULL_SIZE = NL_MEANS_WINDOW_SIZE + NL_MEANS_TEMPLATE_SIZE - 1;
 const int _NL_WINDOW_CENTER_INDEX = _NL_WINDOW_FULL_SIZE >> 1;
 const int _NL_TEMPLATE_SIZE_HALF = NL_MEANS_TEMPLATE_SIZE >> 1;
 
+// Generates a random value in the range (-amplitude, amplitude)
 double noiseGenerator(double amplitude) {
-  return amplitude * ((double)random(0xFFFF) / 0xFFFF);
+  return amplitude * (((double)random(0xFFFF) / 0xFFFF) * 2.0 - 1.0);
 }
 
+// Generates a sine wave, based on the in-board timing
 double sineGenerator(double amplitude, double frequencyHz) {
   double sineValue = sin(millis() * 1e-3 * PI_TWO * frequencyHz) * amplitude;
   return sineValue;
 }
 
+// Converts a floating point value to an integer in the range [0, 1023].
 unsigned long toDiscrete(double value, double amplitude_max) {
   return (unsigned long)(((value + amplitude_max) * 0.5f) / amplitude_max * 1023.f);
 }
@@ -164,7 +180,8 @@ NLMeansFilter filter = createNlMeansFilter();
 
 void setup() {
   Serial.begin(9600);
-  const int seed = (analogRead(0) & 0x2AA) | (analogRead(0) & 0x155);
+  // Reads unconnected analog ports to get some random values
+  const int seed = (analogRead(A7) & 0x2AA) | (analogRead(A8) & 0x155);
   randomSeed(seed);
 
 #ifdef DEBUG
@@ -177,14 +194,20 @@ void setup() {
 }
 
 void loop() {
+#ifdef USE_GENERATED_SINE
   const double noise = noiseGenerator(NOISE_AMPLITUDE);
-  const double sample = sineGenerator(SINE_AMPLITUDE, SINE_FREQUENCY_HZ);
+  const double sine = sineGenerator(SINE_AMPLITUDE, SINE_FREQUENCY_HZ);
+  const double sample = noise + sine;
+#else
+  int sensorValue = analogRead(INPUT_ANALOG_PORT);
+  const double sample = sensorValue * 5.0 / 1023.;
+#endif
 
-  const double filteredSample = filterNlMeans(&filter, sample + noise);
-  const unsigned long input = toDiscrete(sample + noise, _AMPLITUDE_MAX);
-  const unsigned long output = toDiscrete(filteredSample, _AMPLITUDE_MAX);
+  const double filteredSample = filterNlMeans(&filter, sample);
+
+  const unsigned long outputDiscrete = toDiscrete(filteredSample, _AMPLITUDE_MAX);
 
 #ifndef DEBUG
-  Serial.println(output);
+  Serial.println(outputDiscrete);
 #endif
 }
